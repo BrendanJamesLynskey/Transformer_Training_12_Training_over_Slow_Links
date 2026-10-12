@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transformer Training 12 — Training over Slow Links: Top-k, Error Feedback, DeMo, DiLoCo</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=Manrope:wght@300;400;500;600;700&family=Source+Code+Pro:ital,wght@0,400;0,500;0,600;0,700;1,400;1,700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0f2027;
+            --bg-card: #13272f;
+            --bg-code: #182f38;
+            --text-primary: #ede7dd;
+            --text-secondary: #8ca5a9;
+            --accent: #83c395;
+            --accent-dim: #83c39544;
+            --accent-glow: #83c39533;
+            --border: #23404a;
+            --font-display: 'Sora', sans-serif;
+            --font-mono: 'Source Code Pro', 'Source Code Pro', monospace;
+            --font-body: 'Manrope', sans-serif;
+            --max-width: 900px;
+        }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        html { scroll-behavior: smooth; }
+        body {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-family: var(--font-body);
+            font-size: 17px;
+            line-height: 1.7;
+            overflow-x: hidden;
+        }
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 2rem 1.5rem;
+            text-align: center;
+            position: relative;
+        }
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
+            pointer-events: none;
+            z-index: 0;
+        }
+        .hero > * { position: relative; z-index: 1; }
+        .series-label {
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            color: var(--accent);
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            margin-bottom: 1rem;
+        }
+        .hero h1 {
+            font-family: var(--font-display);
+            font-size: clamp(2rem, 5vw, 3.2rem);
+            font-weight: 700;
+            color: var(--text-primary);
+            line-height: 1.2;
+            margin-bottom: 1rem;
+        }
+        .hero h1 .accent { color: var(--accent); }
+        .hero .subtitle {
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+            max-width: 640px;
+            margin-bottom: 2rem;
+        }
+        .tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            justify-content: center;
+            margin-bottom: 2.5rem;
+        }
+        .tag {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            padding: 0.25rem 0.75rem;
+            border-radius: 999px;
+            border: 1px solid var(--accent);
+            color: var(--accent);
+            background: var(--accent-dim);
+            white-space: nowrap;
+        }
+        .pipeline {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: center;
+            gap: 0.25rem;
+            margin-bottom: 1rem;
+            max-width: var(--max-width);
+        }
+        .pipeline-step {
+            font-family: var(--font-mono);
+            font-size: 0.7rem;
+            padding: 0.3rem 0.7rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text-secondary);
+            white-space: nowrap;
+        }
+        .pipeline-arrow { color: var(--accent); font-size: 0.9rem; font-weight: 700; }
+        .slide {
+            min-height: 100vh;
+            max-width: var(--max-width);
+            margin: 0 auto;
+            padding: 4rem 1.5rem;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        .slide-number {
+            font-family: var(--font-display);
+            font-size: 5rem;
+            font-weight: 700;
+            color: var(--accent-dim);
+            position: absolute;
+            top: 2rem;
+            right: 1.5rem;
+            line-height: 1;
+            user-select: none;
+        }
+        .slide h2 {
+            font-family: var(--font-display);
+            font-size: 1.9rem;
+            font-weight: 700;
+            color: var(--accent);
+            margin-bottom: 1.5rem;
+            line-height: 1.25;
+        }
+        .slide h3 {
+            font-family: var(--font-display);
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-top: 1.5rem;
+            margin-bottom: 0.75rem;
+        }
+        .slide p { margin-bottom: 1rem; color: var(--text-secondary); }
+        .slide p strong { color: var(--text-primary); }
+        .slide ul, .slide ol { margin-bottom: 1rem; padding-left: 1.5rem; color: var(--text-secondary); }
+        .slide li { margin-bottom: 0.4rem; }
+        .slide li strong { color: var(--text-primary); }
+        .slide code {
+            font-family: var(--font-mono);
+            font-size: 0.88em;
+            background: var(--bg-code);
+            border: 1px solid var(--border);
+            padding: 0.05rem 0.35rem;
+            border-radius: 3px;
+            color: #cfd7d1;
+        }
+        .code-block {
+            background: var(--bg-code);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin: 1.25rem 0;
+            overflow: hidden;
+        }
+        .code-header {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--accent);
+            background: rgba(131,195,149,0.08);
+            padding: 0.4rem 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+        .code-block pre { margin: 0; padding: 1rem; overflow-x: auto; }
+        .code-block code {
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            line-height: 1.6;
+            color: #cfd7d1;
+            background: transparent;
+            border: none;
+            padding: 0;
+        }
+        .kw { color: #f48f70; }
+        .fn { color: #d4c0ea; }
+        .str { color: #c3dbea; }
+        .cm { color: #8ca5a9; font-style: italic; }
+        .num { color: #a8cee8; }
+        .type { color: #eac48b; }
+        .dir { color: #f48f70; }
+        .mac { color: #eac48b; }
+        .table-wrap {
+            overflow-x: auto;
+            margin: 1.25rem 0;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+        table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+        th {
+            background: var(--bg-code);
+            color: var(--accent);
+            font-weight: 600;
+            text-align: left;
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border);
+            font-family: var(--font-display);
+            white-space: nowrap;
+        }
+        td {
+            padding: 0.6rem 1rem;
+            border-bottom: 1px solid var(--border);
+            color: var(--text-secondary);
+        }
+        tr:last-child td { border-bottom: none; }
+        tr:nth-child(even) td { background: rgba(19,39,47,0.5); }
+        .diagram-flow {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            margin: 1.5rem 0;
+            padding: 1.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+        }
+        .diagram-box {
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            padding: 0.5rem 1rem;
+            background: var(--bg-code);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            text-align: center;
+            white-space: nowrap;
+        }
+        .diagram-box.accent { border-color: var(--accent); color: var(--accent); background: rgba(131,195,149,0.08); }
+        .diagram-box.dim { color: var(--text-secondary); border-color: var(--border); }
+        .diagram-arrow { color: var(--accent); font-size: 1.3rem; font-weight: 700; }
+        .diagram-vertical {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.3rem;
+            margin: 1.5rem 0;
+            padding: 1.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+        }
+        .diagram-vertical .diagram-arrow { font-size: 1.1rem; }
+        .hierarchy {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            margin: 1.5rem 0;
+            padding: 1.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+        }
+        .hierarchy-level { display: flex; align-items: center; gap: 0.75rem; }
+        .hierarchy-label {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            min-width: 80px;
+            text-align: right;
+        }
+        .hierarchy-items { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+        .hierarchy-item {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            padding: 0.3rem 0.6rem;
+            border-radius: 4px;
+            background: var(--bg-code);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+        }
+        .hierarchy-item.accent { border-color: var(--accent); color: var(--accent); background: rgba(131,195,149,0.08); }
+        .diagram-grid {
+            display: grid;
+            gap: 0.75rem;
+            margin: 1.5rem 0;
+            padding: 1.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+        }
+        .diagram-grid.cols-2 { grid-template-columns: 1fr 1fr; }
+        .diagram-grid.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+        .diagram-panel {
+            padding: 1rem;
+            background: var(--bg-code);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+        }
+        .diagram-panel.accent-border { border-left: 3px solid var(--accent); }
+        .diagram-panel h4 {
+            font-family: var(--font-display);
+            font-size: 1rem;
+            color: var(--accent);
+            margin-bottom: 0.5rem;
+        }
+        .diagram-panel p, .diagram-panel ul { font-size: 0.85rem; }
+        .callout {
+            background: var(--bg-card);
+            border-left: 3px solid var(--accent);
+            border-radius: 0 8px 8px 0;
+            padding: 1rem 1.25rem;
+            margin: 1.25rem 0;
+        }
+        .callout p { margin-bottom: 0; }
+        .callout p + p { margin-top: 0.5rem; }
+        .callout .callout-label {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            color: var(--accent);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 0.3rem;
+        }
+        .contents-list { list-style: none; padding-left: 0; counter-reset: contents; }
+        .contents-list li {
+            counter-increment: contents;
+            padding: 0.6rem 0;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+        .contents-list li:last-child { border-bottom: none; }
+        .contents-list li::before {
+            content: counter(contents, decimal-leading-zero);
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            color: var(--accent);
+            min-width: 2rem;
+        }
+        .contents-list a { color: var(--text-primary); text-decoration: none; transition: color 0.2s; }
+        .contents-list a:hover { color: var(--accent); }
+        .footer {
+            text-align: center;
+            padding: 3rem 1.5rem;
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            border-top: 1px solid var(--border);
+            max-width: var(--max-width);
+            margin: 0 auto;
+        }
+        .footer a { color: var(--accent); text-decoration: none; }
+        .footer a:hover { text-decoration: underline; }
+        .canvas-wrap {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1.25rem 0;
+            overflow-x: auto;
+        }
+        .canvas-wrap canvas, .canvas-wrap svg { display: block; margin: 0 auto; max-width: 100%; }
+        .badge {
+            display: inline-block;
+            font-family: var(--font-mono);
+            font-size: 0.65rem;
+            padding: 0.1rem 0.45rem;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            vertical-align: middle;
+            margin-left: 0.3rem;
+        }
+        .badge.ok    { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+        .badge.warn  { border-color: #eac48b; color: #eac48b; background: rgba(234,196,139,0.08); }
+        .badge.bad   { border-color: #f48f70; color: #f48f70; background: rgba(244,143,112,0.08); }
+        @media (max-width: 640px) {
+            .slide { padding: 3rem 1rem; min-height: auto; }
+            .slide-number { font-size: 3rem; top: 1.5rem; right: 1rem; }
+            .slide h2 { font-size: 1.5rem; }
+            .diagram-grid.cols-2, .diagram-grid.cols-3 { grid-template-columns: 1fr; }
+            .pipeline { gap: 0.15rem; }
+            .pipeline-step { font-size: 0.6rem; padding: 0.2rem 0.4rem; }
+            .hero h1 { font-size: 1.8rem; }
+            table { font-size: 0.78rem; }
+        }
+        .slide p a, .slide td a, .slide li a, .callout a { color: var(--accent); text-decoration: none; border-bottom: 1px dotted var(--accent); }
+        .slide p a:hover, .slide td a:hover, .slide li a:hover, .callout a:hover { border-bottom-style: solid; }
+        .hero { overflow: hidden; }
+        .diagram-panel { min-width: 0; }
+        .metric-label .katex, .callout-label .katex, .series-label .katex,
+        .metric-label .katex *, .callout-label .katex * { text-transform: none; }
+        .canvas-wrap canvas { image-rendering: auto; }
+        .katex-display { overflow-x: auto; overflow-y: hidden; padding: 0.25rem 0; }
+        @media (max-width: 640px) { .katex-display { font-size: 0.8em; } }
+        .chart-wrap { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem; margin: 1.25rem 0; }
+        .chart-wrap svg { display: block; width: 100%; height: auto; }
+        .chart-cap { font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.4rem; }
+        .live-link { font-family: var(--font-mono); font-size: 0.8rem; margin-top: 1rem; }
+        .widget { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin: 1.25rem 0; }
+        .widget .row { display: flex; flex-wrap: wrap; gap: 0.6rem 1rem; align-items: center; margin-bottom: 0.6rem; }
+        .widget label { font-family: var(--font-mono); font-size: 0.78rem; color: var(--text-secondary); display: flex; gap: 0.5rem; align-items: center; }
+        .widget input[type=range] { width: 160px; max-width: 100%; accent-color: var(--accent); }
+        .widget select { background: var(--bg-code); color: var(--text-primary); border: 1px solid var(--border); border-radius: 4px; padding: 0.25rem 0.4rem; font-family: var(--font-mono); font-size: 0.78rem; }
+        .widget button { background: var(--bg-code); color: var(--accent); border: 1px solid var(--accent); border-radius: 4px; padding: 0.35rem 0.8rem; font-family: var(--font-mono); font-size: 0.78rem; cursor: pointer; min-height: 36px; }
+        .widget button:hover { background: var(--accent-dim); }
+        .widget .out { font-family: var(--font-mono); font-size: 0.82rem; color: var(--text-primary); }
+        .widget .cap { font-size: 0.82rem; color: var(--text-secondary); min-height: 2.6em; }
+        .widget svg { display: block; width: 100%; height: auto; }
+        .num-strong { color: var(--text-primary); font-weight: 600; }
+    /* deck-mobile-fix:hero */ .hero{overflow:hidden}@supports (overflow-x:clip){.hero{overflow:visible;overflow-x:clip}}
+    /* deck-mobile-fix:phone */ @media (max-width:640px){.diagram-box,.tier-fill,.section-divider>span,.action-btn{white-space:normal;overflow-wrap:anywhere}.diagram-grid>*,.diagram-panel,.diagram-box,.code-block,.callout,.metric,.control-group,.control-row>*,.pipeline-body,.roll-track>*,.tier-fill,.timeline-row>*{min-width:0;max-width:100%}p,li,a,code,td,th,.callout,.diagram-panel{overflow-wrap:break-word}pre{max-width:100%;overflow-x:auto}table{display:block;max-width:100%;overflow-x:auto}.katex-display,.bits,.canvas-wrap,.influence-map-wrapper,.timeline-track,div:has(>.bank-cell){max-width:100%;overflow-x:auto;overflow-y:hidden}select,input,img,video,iframe,.action-btn{max-width:100%}canvas{max-width:100%;height:auto}}
+            /* tt-charts */
+        .chart .plot-bg { fill: none; }
+        .chart .grid { stroke: var(--border); stroke-width: 1; }
+        .chart .axis { stroke: var(--text-secondary); stroke-width: 1; }
+        .chart .lbl { fill: var(--text-secondary); font-family: var(--font-mono); font-size: 12px; }
+        .chart .lbl.ax { fill: var(--text-primary); font-size: 12.5px; }
+        .chart .hline { stroke: var(--text-secondary); stroke-dasharray: 2 4; }
+        .chart .ln { fill: none; stroke-width: 2.2; }
+        .chart .eb { stroke-width: 1.4; }
+        .chart .legend-bg { fill: var(--bg-primary); stroke: var(--border); opacity: 0.92; }
+        .s1 { stroke: #56b4e9; fill: #56b4e9; } .s2 { stroke: #e69f00; fill: #e69f00; }
+        .s3 { stroke: #009e73; fill: #3fbf96; } .s4 { stroke: #cc79a7; fill: #cc79a7; }
+        .s5 { stroke: #f0e442; fill: #f0e442; } .s6 { stroke: #d55e00; fill: #d55e00; }
+        .s0 { stroke: var(--text-secondary); fill: var(--text-secondary); }
+        .ln { fill: none !important; }
+        .chart .bar { stroke: none; opacity: 0.85; }
+        .chart .lbl.inbar { fill: var(--bg-primary); font-weight: 600; }
+        @media (max-width: 640px) { .chart .lbl { font-size: 14px; } .chart .lbl.ax { font-size: 14px; } .wg-text, .wg-dim { font-size: 15px; } }
+        .wg-cell { fill: var(--bg-code); stroke: var(--border); }
+        .wg-text { fill: var(--text-primary); font-family: var(--font-mono); font-size: 13px; }
+        .wg-dim { fill: var(--text-secondary); font-family: var(--font-mono); font-size: 13px; }
+        .wg-hot { fill: #e69f00; } .wg-done { fill: #009e73; } .wg-cool { fill: #56b4e9; } .wg-idle { fill: var(--bg-code); stroke: var(--border); }
+        .wg-fwd { fill: #56b4e9; } .wg-bwd { fill: #e69f00; }
+    </style>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"
+        onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'\\(',right:'\\)',display:false}],throwOnError:false})"></script>
+</head>
+<body>
+<header class="hero">
+    <div class="series-label">Transformer Training &mdash; Presentation 12</div>
+    <h1>Training over <span class="accent">Slow Links</span></h1>
+    <p class="subtitle">Between data centres the link can be a thousand times slower than NVLink, and sending the whole gradient every step stops being affordable. Send less (top-k, DeMo), or less often (DiLoCo): the mechanisms, the bytes, and a toy run of all four, with the real measurements one link away.</p>
+
+    <div class="tags">
+        <span class="tag">WAN</span>
+        <span class="tag">Top-k</span>
+        <span class="tag">Error feedback</span>
+        <span class="tag">All-gather</span>
+        <span class="tag">DeMo</span>
+        <span class="tag">DiLoCo</span>
+        <span class="tag">Queueing</span>
+    </div>
+
+    <div class="pipeline">
+        <span class="pipeline-step">Compress</span>
+        <span class="pipeline-arrow">&rarr;</span>
+        <span class="pipeline-step">Keep residual</span>
+        <span class="pipeline-arrow">&rarr;</span>
+        <span class="pipeline-step">All-gather</span>
+        <span class="pipeline-arrow">&rarr;</span>
+        <span class="pipeline-step">Sync every H</span>
+    </div>
+</header>
+
+<section class="slide" id="slide-00">
+    <div class="slide-number">00</div>
+    <h2>Topics We&rsquo;ll Cover</h2>
+    <ul class="contents-list">
+        <li><a href="#slide-01">A Toy, and Where the Real Measurements Are</a></li>
+        <li><a href="#slide-02">WAN and Inter-Data-Centre Bandwidth</a></li>
+        <li><a href="#slide-03">Top-k Sparsification</a></li>
+        <li><a href="#slide-04">Error Feedback: Keep the Residual</a></li>
+        <li><a href="#slide-05">Why Compressed Vectors Are All-Gathered</a></li>
+        <li><a href="#slide-06">DeMo: Decoupled Momentum</a></li>
+        <li><a href="#slide-07">DiLoCo: Sync Every H Steps</a></li>
+        <li><a href="#slide-08">Four Methods on the Toy</a></li>
+        <li><a href="#slide-09">Bytes, Workers and Bandwidth</a></li>
+        <li><a href="#slide-10">Queueing on a Shared Link, and Stragglers</a></li>
+        <li><a href="#slide-11">What to Take Away</a></li>
+    </ul>
+    <div class="callout">
+        <div class="callout-label">Live companion and sources</div>
+        <p>This deck follows <a href="https://transformer-decoder-explained.vercel.app/training/13-slow-links">chapter 13, training over slow links</a>, where four workers compress their momentum DeMo&rsquo;s way in your browser. Measured numbers: <a href="https://github.com/BrendanJamesLynskey/transformer-explainer/blob/main/results.md#13-training-over-slow-links-chapter-13">results.md &sect;13</a> and &sect;11d. Real measurements: the <a href="https://compute-in-transit-results.vercel.app">Compute in Transit results site</a>.</p>
+    </div>
+</section>
+
+<section class="slide" id="slide-01">
+    <div class="slide-number">01</div>
+    <h2>A Toy, and Where the Real Measurements Are</h2>
+    <div class="callout">
+        <div class="callout-label">Read this first</div>
+        <p>The runs in this deck are a <strong>toy</strong>: Part 1&rsquo;s 5,376-parameter character model, 4 simulated workers in one process, each training on 4 of the default run&rsquo;s 16 windows per step, 2,000 steps, one book, a CPU, three seeds per setting. They show the mechanisms running on a model small enough to follow. They do <strong>not</strong> say what works at scale.</p>
+    </div>
+    <p>The <a href="https://compute-in-transit-results.vercel.app">Compute in Transit results site</a> measured the same ideas on a 15.8-million-parameter GPT trained by eight simulated workers for 3,000 steps on TinyStories, on GPUs, and then simulated data-centre-scale links with those measurements. Its numbers, not these, are the evidence; this deck explains the concepts its pages rely on. Where the two disagree (they do: slide 08), believe the results site.</p>
+    <div class="diagram-flow">
+        <div class="diagram-box">this deck: mechanisms, 5,376 params, CPU</div><span class="diagram-arrow">&rarr;</span>
+        <div class="diagram-box accent"><a href="https://compute-in-transit-results.vercel.app" style="color:inherit;border:0">results site: 15.8M-param GPT, GPUs, simulated WAN</a></div>
+    </div>
+</section>
+
+<section class="slide" id="slide-02">
+    <div class="slide-number">02</div>
+    <h2>WAN and Inter-Data-Centre Bandwidth</h2>
+    <p>Inside a server, NVLink moves hundreds of gigabytes a second per GPU; across a data centre&rsquo;s network, tens (<a href="https://brendanjameslynskey.github.io/Transformer_Training_10_Data_Parallelism_and_ZeRO/#slide-03">deck 10</a>). A wide-area network (<strong>WAN</strong>) link between data centres is shared by a whole site and can offer each training job far less: a 100 GbE link is 12.5 GB/s for everything that crosses it.</p>
+    <div class="diagram-grid cols-3">
+        <div class="diagram-panel accent-border"><h4>NVLink (H100)</h4><p>450 GB/s each way per GPU</p></div>
+        <div class="diagram-panel accent-border"><h4>Cluster network (H100)</h4><p>50 GB/s per GPU</p></div>
+        <div class="diagram-panel accent-border"><h4>100 GbE WAN</h4><p>12.5 GB/s for the whole site</p></div>
+    </div>
+    <p>At those rates, step time = compute + communication is dominated by the communication: LLaMA 7B&rsquo;s dense BF16 gradient (13.5 GB) takes over a second to send at 12.5 GB/s, every step, before any other job shares the link. Training over slow links means <strong>sending less, sending less often, or both</strong>.</p>
+</section>
+
+<section class="slide" id="slide-03">
+    <div class="slide-number">03</div>
+    <h2>Top-k Sparsification</h2>
+    <p>Send only the \(k\) largest values of a vector, and where they are: here 1 in 16 per tensor. Most of a gradient&rsquo;s coordinates are small at any one step, so most of the step survives.</p>
+    <div class="diagram-grid cols-2">
+        <div class="diagram-panel accent-border"><h4>Positions cost bytes</h4><p>Each kept value needs its position: for Part 1&rsquo;s model 2 bytes of BF16 value plus 2 bytes of position, so 1 value in 16 costs 4/32 of the dense bytes, not 1/16: <strong>1,344</strong> bytes a step against <strong>10,752</strong> for the dense gradient.</p></div>
+        <div class="diagram-panel accent-border"><h4>Deep Gradient Compression</h4><p><a href="https://arxiv.org/abs/1712.01887">Lin et al. (2018)</a> apply it to an accumulated momentum: each worker adds its gradient into a local momentum and an accumulator, sends the top of the accumulator, and plain SGD steps with the average of what was sent (momentum 0.9 here).</p></div>
+    </div>
+    $$\begin{gathered}u_i \leftarrow \mu u_i + g_i,\qquad v_i \leftarrow v_i + u_i \\ s_i = \operatorname{top}_k(v_i),\qquad v_i \leftarrow v_i - s_i \\ \theta \leftarrow \theta - \tfrac{\eta}{W}\textstyle\sum_i s_i\end{gathered}$$
+</section>
+
+<section class="slide" id="slide-04">
+    <div class="slide-number">04</div>
+    <h2>Error Feedback: Keep the Residual</h2>
+    <p>What a compressor drops is not thrown away: each worker keeps it, the <strong>residual</strong> (\(v_i - s_i\) above), and adds it to the next step&rsquo;s vector before compressing again. A coordinate too small to be sent this step keeps growing until it is large enough to be sent, so every update arrives eventually, only late.</p>
+    <div class="diagram-flow">
+        <div class="diagram-box">gradient</div><span class="diagram-arrow">+</span>
+        <div class="diagram-box accent">residual (kept locally)</div><span class="diagram-arrow">&rarr;</span>
+        <div class="diagram-box">compress</div><span class="diagram-arrow">&rarr;</span>
+        <div class="diagram-box">send</div>
+        <div class="diagram-box dim">what was not sent &rarr; residual</div>
+    </div>
+    <p>Without it, the steady small coordinates of the gradient would never be applied at all; with it, compressed SGD provably converges at the uncompressed rate in the long run (<a href="https://arxiv.org/abs/1809.07599">Stich et al. 2018</a>, sparsified SGD with memory; <a href="https://arxiv.org/abs/1901.09847">Karimireddy et al. 2019</a>, error feedback fixes signSGD). 1-bit SGD (<a href="https://www.isca-archive.org/interspeech_2014/seide14_interspeech.html">Seide et al. 2014</a>) had used the same trick to send one bit per gradient value. DeMo&rsquo;s momentum <em>is</em> its residual.</p>
+</section>
+
+<section class="slide" id="slide-05">
+    <div class="slide-number">05</div>
+    <h2>Why Compressed Vectors Are All-Gathered</h2>
+    <p>A ring all-reduce adds the workers&rsquo; chunks as they pass, which needs every worker&rsquo;s vector to have the same layout (<a href="https://brendanjameslynskey.github.io/Transformer_Training_10_Data_Parallelism_and_ZeRO/#slide-05">deck 10</a>). Top-k vectors don&rsquo;t: each worker picks its own positions. So the workers <strong>all-gather</strong> instead: every worker receives every other worker&rsquo;s values and positions and adds them itself.</p>
+    $$\begin{gathered}\text{dense: } 2\,\tfrac{W-1}{W}\,2P \qquad \text{compressed: } (W-1)\,c \\ \text{DiLoCo: } 2\,\tfrac{W-1}{W}\,2P\,/\,H\end{gathered}$$
+    <p>Bytes on the wire per worker per step for \(W\) workers, \(P\) parameters, 2-byte values and a compressed payload of \(c\) bytes. With four workers DeMo&rsquo;s 1,008 bytes of payload become 3,024 on the wire, against the dense all-reduce&rsquo;s 16,128. With eight workers the same payload costs 7 times itself, which is why the results site quotes both a payload ratio and a smaller wire ratio. Try it on slide 09.</p>
+</section>
+
+<section class="slide" id="slide-06">
+    <div class="slide-number">06</div>
+    <h2>DeMo: Decoupled Momentum</h2>
+    <p><a href="https://arxiv.org/abs/2411.19870">Peng et al. (2024)</a> let each worker keep its <strong>own momentum</strong> instead of syncing gradients (their Algorithm 1):</p>
+    <ol>
+        <li>fold the gradient into the local momentum (&beta; = 0.999 here);</li>
+        <li>cut each tensor into chunks (up to 64 values) and take each chunk&rsquo;s <strong>discrete cosine transform</strong>;</li>
+        <li>send the \(k\) largest coefficients per chunk (4 of 64 here) and subtract them from the momentum: the rest stays behind as error feedback;</li>
+        <li>everyone averages the coefficients gathered, transforms back, and steps by the <strong>sign</strong> of the result.</li>
+    </ol>
+    <p>The DCT rearranges a chunk into frequency components without losing anything (it is orthonormal: what is sent and what is kept add up to the whole), and the momentum&rsquo;s large, slowly changing components tend to collect in a few coefficients, the &ldquo;fast components&rdquo; that get sent. Values in BF16 and positions in one byte: <strong>1,008</strong> bytes a step per worker.</p>
+</section>
+
+<section class="slide" id="slide-07">
+    <div class="slide-number">07</div>
+    <h2>DiLoCo: Sync Every H Steps</h2>
+    <p>The other way to save bytes is to sync less often. In DiLoCo (<a href="https://arxiv.org/abs/2311.08105">Douillard et al. 2023</a>, Algorithm 1) each worker trains alone with AdamW for \(H\) steps; then the workers average how far they moved (the <strong>pseudo-gradient</strong>) and an <strong>outer optimiser</strong>, Nesterov momentum (learning rate 0.7, momentum 0.9, the paper&rsquo;s setting), moves the shared weights; then everyone starts the next \(H\) steps from them.</p>
+    $$\begin{gathered}\Delta = \tfrac{1}{W}\textstyle\sum_i (\theta - \theta_i), \qquad b \leftarrow \mu b + \Delta \\ \theta \leftarrow \theta - \eta_{\text{out}}(\Delta + \mu b)\end{gathered}$$
+    <p>It sends the dense vector, but only once per \(H\) steps: 1,613 bytes a step on average at \(H = 10\), 323 at \(H = 50\). Local SGD, its ancestor, is analysed by <a href="https://arxiv.org/abs/1805.09767">Stich (2018)</a>.</p>
+</section>
+
+<section class="slide" id="slide-08">
+    <div class="slide-number">08</div>
+    <h2>Four Methods on the Toy</h2>
+    <div class="chart-wrap"><svg class="chart" viewBox="0 0 480 290" role="img" aria-label="Validation loss by method over slow links">
+<rect class="plot-bg" x="62" y="18" width="392" height="230"/>
+<line class="grid" x1="62" x2="454" y1="248.0" y2="248.0"/>
+<text class="lbl" x="56" y="252.0" text-anchor="end">2</text>
+<line class="grid" x1="62" x2="454" y1="198.0" y2="198.0"/>
+<text class="lbl" x="56" y="202.0" text-anchor="end">2.5</text>
+<line class="grid" x1="62" x2="454" y1="148.0" y2="148.0"/>
+<text class="lbl" x="56" y="152.0" text-anchor="end">3</text>
+<line class="grid" x1="62" x2="454" y1="98.0" y2="98.0"/>
+<text class="lbl" x="56" y="102.0" text-anchor="end">3.5</text>
+<line class="grid" x1="62" x2="454" y1="48.0" y2="48.0"/>
+<text class="lbl" x="56" y="52.0" text-anchor="end">4</text>
+<line class="grid" x1="62.0" x2="62.0" y1="18" y2="248"/>
+<text class="lbl" x="62.0" y="264" text-anchor="middle">0</text>
+<line class="grid" x1="160.0" x2="160.0" y1="18" y2="248"/>
+<text class="lbl" x="160.0" y="264" text-anchor="middle">500</text>
+<line class="grid" x1="258.0" x2="258.0" y1="18" y2="248"/>
+<text class="lbl" x="258.0" y="264" text-anchor="middle">1,000</text>
+<line class="grid" x1="356.0" x2="356.0" y1="18" y2="248"/>
+<text class="lbl" x="356.0" y="264" text-anchor="middle">1,500</text>
+<line class="grid" x1="454.0" x2="454.0" y1="18" y2="248"/>
+<text class="lbl" x="454.0" y="264" text-anchor="middle">2,000</text>
+<line class="axis" x1="62" x2="454" y1="248" y2="248"/>
+<line class="axis" x1="62" x2="62" y1="18" y2="248"/>
+<text class="lbl ax" x="258" y="284" text-anchor="middle">step</text>
+<text class="lbl ax" x="13" y="133" text-anchor="middle" transform="rotate(-90 13 133)">validation loss (mean of 3 seeds)</text>
+<line class="hline" x1="62" x2="454" y1="188.0" y2="188.0"/>
+<text class="lbl hl" x="450" y="184.0" text-anchor="end">target 2.6</text>
+<clipPath id="clip133408786694016"><rect x="62" y="18" width="392" height="230"/></clipPath>
+<g clip-path="url(#clip133408786694016)">
+<path class="ln s0" d="M62.0,30.3 L71.8,150.3 L81.6,151.2 L91.4,150.5 L101.2,152.4 L111.0,151.5 L120.8,151.8 L130.6,152.8 L140.4,151.8 L150.2,151.8 L160.0,151.5 L169.8,152.0 L179.6,153.1 L189.4,152.2 L199.2,152.3 L209.0,153.6 L218.8,157.0 L228.6,159.0 L238.4,166.8 L248.2,171.1 L258.0,177.6 L267.8,183.7 L277.6,188.2 L287.4,194.8 L297.2,199.8 L307.0,200.9 L316.8,203.9 L326.6,205.6 L336.4,207.9 L346.2,209.6 L356.0,211.3 L365.8,212.7 L375.6,213.9 L385.4,215.0 L395.2,215.9 L405.0,216.9 L414.8,217.7 L424.6,218.1 L434.4,219.0 L444.2,220.4 L454.0,220.3"/>
+<path class="ln s1" d="M62.0,30.3 L71.8,145.5 L81.6,147.7 L91.4,149.9 L101.2,154.8 L111.0,151.6 L120.8,167.4 L130.6,171.0 L140.4,176.1 L150.2,184.9 L160.0,186.2 L169.8,190.1 L179.6,193.8 L189.4,193.6 L199.2,201.2 L209.0,193.7 L218.8,200.7 L228.6,200.5 L238.4,200.1 L248.2,202.7 L258.0,201.4 L267.8,208.2 L277.6,208.6 L287.4,210.0 L297.2,209.2 L307.0,213.3 L316.8,213.9 L326.6,217.8 L336.4,219.0 L346.2,221.5 L356.0,219.0 L365.8,222.5 L375.6,220.4 L385.4,222.8 L395.2,223.6 L405.0,222.7 L414.8,225.9 L424.6,223.8 L434.4,224.9 L444.2,224.5 L454.0,225.5"/>
+<path class="ln s2" d="M62.0,30.3 L71.8,149.6 L81.6,148.2 L91.4,151.7 L101.2,161.5 L111.0,174.2 L120.8,188.0 L130.6,196.4 L140.4,197.3 L150.2,204.6 L160.0,208.0 L169.8,211.1 L179.6,212.5 L189.4,213.4 L199.2,215.3 L209.0,219.7 L218.8,219.4 L228.6,219.1 L238.4,219.3 L248.2,224.5 L258.0,225.3 L267.8,226.4 L277.6,225.2 L287.4,228.5 L297.2,228.6 L307.0,229.5 L316.8,231.9 L326.6,231.5 L336.4,232.9 L346.2,234.8 L356.0,236.2 L365.8,237.5 L375.6,237.7 L385.4,238.3 L395.2,239.5 L405.0,238.5 L414.8,240.0 L424.6,238.9 L434.4,240.2 L444.2,240.7 L454.0,240.7"/>
+<path class="ln s4" d="M62.0,30.3 L71.8,147.4 L81.6,151.0 L91.4,150.3 L101.2,151.5 L111.0,151.2 L120.8,151.3 L130.6,152.0 L140.4,151.8 L150.2,151.4 L160.0,151.9 L169.8,151.2 L179.6,152.6 L189.4,152.3 L199.2,153.6 L209.0,154.5 L218.8,156.2 L228.6,155.0 L238.4,157.0 L248.2,158.7 L258.0,159.6 L267.8,162.8 L277.6,163.6 L287.4,164.6 L297.2,167.8 L307.0,168.4 L316.8,170.7 L326.6,172.6 L336.4,174.4 L346.2,176.3 L356.0,178.0 L365.8,179.6 L375.6,180.7 L385.4,180.1 L395.2,184.5 L405.0,186.0 L414.8,186.3 L424.6,187.8 L434.4,187.9 L444.2,189.0 L454.0,190.2"/>
+<path class="ln s3" d="M62.0,30.3 L71.8,142.8 L81.6,95.7 L91.4,143.6 L101.2,150.1 L111.0,147.4 L120.8,150.7 L130.6,150.9 L140.4,151.3 L150.2,152.3 L160.0,150.4 L169.8,150.8 L179.6,152.2 L189.4,152.0 L199.2,151.9 L209.0,151.7 L218.8,152.5 L228.6,152.3 L238.4,153.1 L248.2,152.4 L258.0,151.8 L267.8,155.5 L277.6,156.5 L287.4,153.5 L297.2,157.8 L307.0,158.9 L316.8,160.4 L326.6,161.9 L336.4,163.5 L346.2,161.7 L356.0,163.4 L365.8,166.6 L375.6,168.2 L385.4,167.8 L395.2,171.1 L405.0,172.3 L414.8,173.4 L424.6,173.0 L434.4,174.7 L444.2,176.7 L454.0,177.4"/>
+</g>
+<g class="legend"><rect class="legend-bg" x="341" y="24" width="107" height="88" rx="4"/><line class="ln s0" x1="349" x2="367" y1="34" y2="34"/><text class="lbl" x="372" y="38">dense AdamW</text><line class="ln s1" x1="349" x2="367" y1="50" y2="50"/><text class="lbl" x="372" y="54">top-k + EF</text><line class="ln s2" x1="349" x2="367" y1="66" y2="66"/><text class="lbl" x="372" y="70">DeMo</text><line class="ln s4" x1="349" x2="367" y1="82" y2="82"/><text class="lbl" x="372" y="86">DiLoCo H=10</text><line class="ln s3" x1="349" x2="367" y1="98" y2="98"/><text class="lbl" x="372" y="102">DiLoCo H=50</text></g>
+</svg><div class="chart-cap">Toy: 4 simulated workers, Part 1&rsquo;s model, each method at its best learning rate (results.md &sect;13).</div></div>
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Method</th><th>Best lr</th><th>Final validation loss</th><th>Steps to 2.6 (seeds)</th><th>Payload</th><th>Wire</th><th>Wire vs dense</th></tr></thead>
+            <tbody>
+                <tr><td>dense AdamW</td><td>0.01</td><td>2.277 &plusmn; 0.090</td><td>1,150, 1,300, 1,000</td><td>10,752 B</td><td>16,128 B</td><td>1.0&times; less</td></tr>
+                <tr><td>top-k + EF</td><td>1</td><td>2.225 &plusmn; 0.039</td><td>550, 550, 500</td><td>1,344 B</td><td>4,032 B</td><td>4.0&times; less</td></tr>
+                <tr><td>DeMo</td><td>0.03</td><td>2.073 &plusmn; 0.047</td><td>350, 300, 300</td><td>1,008 B</td><td>3,024 B</td><td>5.3&times; less</td></tr>
+                <tr><td>DiLoCo H=10</td><td>0.03</td><td>2.578 &plusmn; 0.078</td><td>not reached, 1,700, 1,950</td><td>1,075 B</td><td>1,613 B</td><td>10.0&times; less</td></tr>
+                <tr><td>DiLoCo H=50</td><td>0.1</td><td>2.706 &plusmn; 0.094</td><td>not reached, not reached, not reached</td><td>215 B</td><td>323 B</td><td>50.0&times; less</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <p>Each method at the best of three learning rates (a sign step, a plain SGD step and Adam&rsquo;s normalised step want very different rates), three seeds. DeMo&rsquo;s best rate is the top of its grid, so it might do better higher still; top-k at 3.0 diverged in every seed. On this toy the compressors leave the plateau sooner than dense AdamW and DeMo ends lowest, while DiLoCo, whose workers each see only 4 windows a step between syncs, lags.</p>
+    <div class="callout">
+        <div class="callout-label">Do not read that order as general</div>
+        <p>On the <a href="https://compute-in-transit-results.vercel.app">results site&rsquo;s</a> 15.8M-parameter GPT, dense AdamW ended lowest and DeMo&rsquo;s top-k some way behind it. A 5,376-parameter character model on one book is a different optimisation problem, and the compressors&rsquo; big early steps (DeMo&rsquo;s are a full learning rate on every weight) suit its plateau.</p>
+    </div>
+</section>
+
+<section class="slide" id="slide-09">
+    <div class="slide-number">09</div>
+    <h2>Bytes, Workers and Bandwidth</h2>
+    <p>The formulas of slide 05 on Part 1&rsquo;s 5,376 parameters. Raise the number of workers and watch the compressors&rsquo; wire bytes grow while the all-reduce&rsquo;s stay put.</p>
+    <div class="widget" id="wire-widget">
+        <div class="row">
+            <label>workers W <input type="range" id="wire-w" min="2" max="64" value="4"></label>
+            <label>link <select id="wire-bw"><option value="1e6">1 MB/s</option><option value="1e5" selected>100 kB/s</option><option value="1e4">10 kB/s</option></select></label>
+        </div>
+        <div class="table-wrap"><table><thead><tr><th>Method</th><th>Payload</th><th>Wire per step</th><th>vs dense</th><th>Communication to reach 2.6</th></tr></thead><tbody id="wire-body"></tbody></table></div>
+        <div class="cap" id="wire-cap" aria-live="polite"></div>
+    </div>
+    <script>
+    (function () {
+        const P = 5376, M = [
+            { n: 'dense AdamW (all-reduce)', pay: 10752, kind: 'ar', H: 1, steps: 1150.0 },
+            { n: 'top-k + error feedback', pay: 1344, kind: 'ag', H: 1, steps: 533.3 },
+            { n: 'DeMo', pay: 1008, kind: 'ag', H: 1, steps: 316.7 },
+            { n: 'DiLoCo H = 10', pay: 2 * P, kind: 'ar', H: 10, steps: null },
+            { n: 'DiLoCo H = 50', pay: 2 * P, kind: 'ar', H: 50, steps: null },
+        ];
+        const wire = (m, W) => m.kind === 'ar' ? 2 * (W - 1) / W * m.pay / m.H : (W - 1) * m.pay;
+        window.__wire = W => M.map(m => wire(m, W));
+        function upd() {
+            const W = +document.getElementById('wire-w').value, bw = +document.getElementById('wire-bw').value, dense = wire(M[0], W);
+            document.getElementById('wire-body').innerHTML = M.map(m => {
+                const w = wire(m, W), t = (W === 4 && m.steps) ? (m.steps * w / bw).toFixed(1) + ' s' : (W === 4 ? 'not reached in every seed' : 'measured at W = 4 only');
+                return '<tr><td>' + m.n + '</td><td>' + (m.pay / m.H).toFixed(0) + ' B' + '</td><td>' + w.toFixed(0) + ' B</td><td>' + (dense / w).toFixed(1) + '&times; less</td><td>' + t + '</td></tr>';
+            }).join('');
+            document.getElementById('wire-cap').textContent = 'W = ' + W + ': all-gather wire = (W − 1) × payload grows with every worker; all-reduce wire stays below 2 × payload. ' +
+                (W === 4 ? 'Last column: mean measured steps to validation loss 2.6 × wire bytes ÷ link speed (communication only, no compute; toy bytes, so toy link speeds).' : '');
+        }
+        document.getElementById('wire-w').addEventListener('input', upd);
+        document.getElementById('wire-bw').addEventListener('change', upd);
+        upd();
+    })();
+    </script>
+</section>
+
+<section class="slide" id="slide-10">
+    <div class="slide-number">10</div>
+    <h2>Queueing on a Shared Link, and Stragglers</h2>
+    <div class="diagram-grid cols-2">
+        <div class="diagram-panel accent-border">
+            <h4>Queueing</h4>
+            <p>A shared WAN carries other traffic; a sync that arrives while the link is busy waits. With transfers arriving at random and the link busy a fraction \(\rho\) of the time, a newcomer waits on average \(\rho\,s/(2(1-\rho))\) for transfers of length \(s\) (M/D/1, the Pollaczek&ndash;Khinchine formula). The wait grows without bound as the link fills, and hurts most the methods that send most.</p>
+        </div>
+        <div class="diagram-panel accent-border">
+            <h4>Stragglers</h4>
+            <p>Synchronous training waits for the slowest worker every step. Eight workers, each step 1 + 0.1&times;Exp(1) time units: syncing every step costs the slowest of eight; syncing every \(H\) steps, as DiLoCo does, waits for the slowest <em>sum</em> of \(H\) steps, which is closer to the mean.</p>
+        </div>
+    </div>
+    <div class="diagram-grid cols-2">
+        <div><div class="table-wrap">
+        <table>
+            <thead><tr><th>Load &rho;</th><th>M/D/1 wait</th><th>Simulated</th></tr></thead>
+            <tbody>
+                <tr><td>0.3</td><td>0.214</td><td>0.214</td></tr>
+                <tr><td>0.6</td><td>0.750</td><td>0.765</td></tr>
+                <tr><td>0.9</td><td>4.500</td><td>4.518</td></tr>
+            </tbody>
+        </table>
+    </div></div>
+        <div><div class="table-wrap">
+        <table>
+            <thead><tr><th>Sync every</th><th>Time per step</th><th>Mean worker&rsquo;s step</th></tr></thead>
+            <tbody>
+                <tr><td>1 (every step)</td><td>1.270</td><td>1.099</td></tr>
+                <tr><td>10</td><td>1.148</td><td>1.099</td></tr>
+                <tr><td>50</td><td>1.121</td><td>1.099</td></tr>
+            </tbody>
+        </table>
+    </div></div>
+    </div>
+    <p style="font-size:0.85rem">Seeded simulations against the formulas (results.md &sect;11d). The results site&rsquo;s transit page shows queueing on its recorded runs.</p>
+</section>
+
+<section class="slide" id="slide-11">
+    <div class="slide-number">11</div>
+    <h2>What to Take Away</h2>
+    <ul>
+        <li>Over a WAN, communication dominates the step: <strong>send less</strong> (top-k, DeMo) or <strong>less often</strong> (DiLoCo).</li>
+        <li><strong>Error feedback</strong> keeps what was not sent, so it arrives later instead of never.</li>
+        <li>Compressed vectors have different layouts per worker, so they are <strong>all-gathered</strong>: wire bytes \((W-1)\times\) payload, growing with the workers.</li>
+        <li><strong>DeMo</strong>: DCT of momentum chunks, send the fast components, sign step. <strong>DiLoCo</strong>: \(H\) local AdamW steps, then an outer Nesterov step on the pseudo-gradient.</li>
+        <li>Queues and stragglers add waiting that bandwidth alone does not show.</li>
+        <li>This deck&rsquo;s runs are a toy; the evidence is on the <a href="https://compute-in-transit-results.vercel.app">Compute in Transit results site</a>.</li>
+    </ul>
+    <p class="live-link">Animated: <a href="https://transformer-decoder-explained.vercel.app/training/13-slow-links">chapter 13, training over slow links</a> &middot; series: <a href="https://github.com/BrendanJamesLynskey/LLM_Hub_Compute_in_Transit">Compute in Transit</a> &middot; next: <a href="https://brendanjameslynskey.github.io/Transformer_Training_13_Scaling_Laws_and_Running_a_Job/">deck 13, scaling laws and running a job</a></p>
+</section>
+
+<footer class="footer">
+    <p>Part of the <a href="https://github.com/BrendanJamesLynskey/LLM_Hub_Transformer_Training">Transformer Training series</a> &middot; live, animated companion: <a href="https://transformer-decoder-explained.vercel.app/training/13-slow-links">chapter 13, Training over slow links</a> of <a href="https://transformer-decoder-explained.vercel.app/training">Transformer Decoder Explained, Part 2</a></p>
+    <p style="margin-top: 0.5rem; font-size: 0.8rem;"><a href="https://brendanjameslynskey.github.io/Transformer_Training_11_Model_Parallelism/">&larr; 11 Model Parallel</a> &nbsp;&middot;&nbsp; <a href="https://brendanjameslynskey.github.io/LLM_Hub_Transformer_Training/">Series index</a> &nbsp;&middot;&nbsp; <a href="https://brendanjameslynskey.github.io/Transformer_Training_13_Scaling_Laws_and_Running_a_Job/">13 Scaling &amp; Running &rarr;</a></p>
+    <p style="margin-top: 0.5rem; font-size: 0.75rem;">Measured numbers: <a href="https://github.com/BrendanJamesLynskey/transformer-explainer/blob/main/results.md">results.md</a> (transformer-explainer @15b1c9f). Code on these slides is cut from that repository.</p>
+</footer>
+<script>
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+        anchor.addEventListener('click', function (e) {
+            e.preventDefault();
+            const target = document.querySelector(this.getAttribute('href'));
+            if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+    });
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                entry.target.style.opacity = '1';
+                entry.target.style.transform = 'translateY(0)';
+            }
+        });
+    }, { threshold: 0.1 });
+    document.querySelectorAll('.slide').forEach(slide => {
+        slide.style.opacity = '0';
+        slide.style.transform = 'translateY(30px)';
+        slide.style.transition = 'opacity 0.6s ease, transform 0.6s ease';
+        observer.observe(slide);
+    });
+</script>
+</body>
+</html>
