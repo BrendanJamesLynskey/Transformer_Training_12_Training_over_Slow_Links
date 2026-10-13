@@ -505,7 +505,7 @@
     <h2>A Toy, and Where the Real Measurements Are</h2>
     <div class="callout">
         <div class="callout-label">Read this first</div>
-        <p>The runs in this deck are a <strong>toy</strong>: Part 1&rsquo;s 5,376-parameter character model, 4 simulated workers in one process, each training on 4 of the default run&rsquo;s 16 windows per step, 2,000 steps, one book, a CPU, three seeds per setting. They show the mechanisms running on a model small enough to follow. They do <strong>not</strong> say what works at scale.</p>
+        <p>The runs in this deck are a <strong>toy</strong>: the Decoder&rsquo;s 5,376-parameter character model, 4 simulated workers in one process, each training on 4 of the default run&rsquo;s 16 windows per step, 2,000 steps, one book, a CPU, three seeds per setting. They show the mechanisms running on a model small enough to follow. They do <strong>not</strong> say what works at scale.</p>
     </div>
     <p>The <a href="https://compute-in-transit-results.vercel.app">Compute in Transit results site</a> measured the same ideas on a 15.8-million-parameter GPT trained by eight simulated workers for 3,000 steps on TinyStories, on GPUs, and then simulated data-centre-scale links with those measurements. Its numbers, not these, are the evidence; this deck explains the concepts its pages rely on. Where the two disagree (they do: slide 08), believe the results site.</p>
     <div class="diagram-flow">
@@ -531,7 +531,7 @@
     <h2>Top-k Sparsification</h2>
     <p>Send only the \(k\) largest values of a vector, and where they are: here 1 in 16 per tensor. Most of a gradient&rsquo;s coordinates are small at any one step, so most of the step survives.</p>
     <div class="diagram-grid cols-2">
-        <div class="diagram-panel accent-border"><h4>Positions cost bytes</h4><p>Each kept value needs its position: for Part 1&rsquo;s model 2 bytes of BF16 value plus 2 bytes of position, so 1 value in 16 costs 4/32 of the dense bytes, not 1/16: <strong>1,344</strong> bytes a step against <strong>10,752</strong> for the dense gradient.</p></div>
+        <div class="diagram-panel accent-border"><h4>Positions cost bytes</h4><p>Each kept value needs its position: for the Decoder&rsquo;s model 2 bytes of BF16 value plus 2 bytes of position, so 1 value in 16 costs 4/32 of the dense bytes, not 1/16: <strong>1,344</strong> bytes a step against <strong>10,752</strong> for the dense gradient.</p></div>
         <div class="diagram-panel accent-border"><h4>Deep Gradient Compression</h4><p><a href="https://arxiv.org/abs/1712.01887">Lin et al. (2018)</a> apply it to an accumulated momentum: each worker adds its gradient into a local momentum and an accumulator, sends the top of the accumulator, and plain SGD steps with the average of what was sent (momentum 0.9 here).</p></div>
     </div>
     $$\begin{gathered}u_i \leftarrow \mu u_i + g_i,\qquad v_i \leftarrow v_i + u_i \\ s_i = \operatorname{top}_k(v_i),\qquad v_i \leftarrow v_i - s_i \\ \theta \leftarrow \theta - \tfrac{\eta}{W}\textstyle\sum_i s_i\end{gathered}$$
@@ -611,8 +611,8 @@
 <text class="lbl ax" x="13" y="133" text-anchor="middle" transform="rotate(-90 13 133)">validation loss (mean of 3 seeds)</text>
 <line class="hline" x1="62" x2="454" y1="188.0" y2="188.0"/>
 <text class="lbl hl" x="450" y="184.0" text-anchor="end">target 2.6</text>
-<clipPath id="clip129418997676608"><rect x="62" y="18" width="392" height="230"/></clipPath>
-<g clip-path="url(#clip129418997676608)">
+<clipPath id="clip136114097110400"><rect x="62" y="18" width="392" height="230"/></clipPath>
+<g clip-path="url(#clip136114097110400)">
 <path class="ln s0" d="M62.0,30.3 L71.8,150.3 L81.6,151.2 L91.4,150.5 L101.2,152.4 L111.0,151.5 L120.8,151.8 L130.6,152.8 L140.4,151.8 L150.2,151.8 L160.0,151.5 L169.8,152.0 L179.6,153.1 L189.4,152.2 L199.2,152.3 L209.0,153.6 L218.8,157.0 L228.6,159.0 L238.4,166.8 L248.2,171.1 L258.0,177.6 L267.8,183.7 L277.6,188.2 L287.4,194.8 L297.2,199.8 L307.0,200.9 L316.8,203.9 L326.6,205.6 L336.4,207.9 L346.2,209.6 L356.0,211.3 L365.8,212.7 L375.6,213.9 L385.4,215.0 L395.2,215.9 L405.0,216.9 L414.8,217.7 L424.6,218.1 L434.4,219.0 L444.2,220.4 L454.0,220.3"/>
 <path class="ln s1" d="M62.0,30.3 L71.8,145.5 L81.6,147.7 L91.4,149.9 L101.2,154.8 L111.0,151.6 L120.8,167.4 L130.6,171.0 L140.4,176.1 L150.2,184.9 L160.0,186.2 L169.8,190.1 L179.6,193.8 L189.4,193.6 L199.2,201.2 L209.0,193.7 L218.8,200.7 L228.6,200.5 L238.4,200.1 L248.2,202.7 L258.0,201.4 L267.8,208.2 L277.6,208.6 L287.4,210.0 L297.2,209.2 L307.0,213.3 L316.8,213.9 L326.6,217.8 L336.4,219.0 L346.2,221.5 L356.0,219.0 L365.8,222.5 L375.6,220.4 L385.4,222.8 L395.2,223.6 L405.0,222.7 L414.8,225.9 L424.6,223.8 L434.4,224.9 L444.2,224.5 L454.0,225.5"/>
 <path class="ln s2" d="M62.0,30.3 L71.8,149.6 L81.6,148.2 L91.4,151.7 L101.2,161.5 L111.0,174.2 L120.8,188.0 L130.6,196.4 L140.4,197.3 L150.2,204.6 L160.0,208.0 L169.8,211.1 L179.6,212.5 L189.4,213.4 L199.2,215.3 L209.0,219.7 L218.8,219.4 L228.6,219.1 L238.4,219.3 L248.2,224.5 L258.0,225.3 L267.8,226.4 L277.6,225.2 L287.4,228.5 L297.2,228.6 L307.0,229.5 L316.8,231.9 L326.6,231.5 L336.4,232.9 L346.2,234.8 L356.0,236.2 L365.8,237.5 L375.6,237.7 L385.4,238.3 L395.2,239.5 L405.0,238.5 L414.8,240.0 L424.6,238.9 L434.4,240.2 L444.2,240.7 L454.0,240.7"/>
@@ -620,7 +620,7 @@
 <path class="ln s3" d="M62.0,30.3 L71.8,142.8 L81.6,95.7 L91.4,143.6 L101.2,150.1 L111.0,147.4 L120.8,150.7 L130.6,150.9 L140.4,151.3 L150.2,152.3 L160.0,150.4 L169.8,150.8 L179.6,152.2 L189.4,152.0 L199.2,151.9 L209.0,151.7 L218.8,152.5 L228.6,152.3 L238.4,153.1 L248.2,152.4 L258.0,151.8 L267.8,155.5 L277.6,156.5 L287.4,153.5 L297.2,157.8 L307.0,158.9 L316.8,160.4 L326.6,161.9 L336.4,163.5 L346.2,161.7 L356.0,163.4 L365.8,166.6 L375.6,168.2 L385.4,167.8 L395.2,171.1 L405.0,172.3 L414.8,173.4 L424.6,173.0 L434.4,174.7 L444.2,176.7 L454.0,177.4"/>
 </g>
 <g class="legend"><rect class="legend-bg" x="341" y="24" width="107" height="88" rx="4"/><line class="ln s0" x1="349" x2="367" y1="34" y2="34"/><text class="lbl" x="372" y="38">dense AdamW</text><line class="ln s1" x1="349" x2="367" y1="50" y2="50"/><text class="lbl" x="372" y="54">top-k + EF</text><line class="ln s2" x1="349" x2="367" y1="66" y2="66"/><text class="lbl" x="372" y="70">DeMo</text><line class="ln s4" x1="349" x2="367" y1="82" y2="82"/><text class="lbl" x="372" y="86">DiLoCo H=10</text><line class="ln s3" x1="349" x2="367" y1="98" y2="98"/><text class="lbl" x="372" y="102">DiLoCo H=50</text></g>
-</svg><div class="chart-cap">Toy: 4 simulated workers, Part 1&rsquo;s model, each method at its best learning rate (results.md &sect;13).</div></div>
+</svg><div class="chart-cap">Toy: 4 simulated workers, the Decoder&rsquo;s model, each method at its best learning rate (results.md &sect;13).</div></div>
     <div class="table-wrap">
         <table>
             <thead><tr><th>Method</th><th>Best lr</th><th>Final validation loss</th><th>Steps to 2.6 (seeds)</th><th>Payload</th><th>Wire</th><th>Wire vs dense</th></tr></thead>
@@ -643,7 +643,7 @@
 <section class="slide" id="slide-09">
     <div class="slide-number">09</div>
     <h2>Bytes, Workers and Bandwidth</h2>
-    <p>The formulas of slide 05 on Part 1&rsquo;s 5,376 parameters. Raise the number of workers and watch the compressors&rsquo; wire bytes grow while the all-reduce&rsquo;s stay put.</p>
+    <p>The formulas of slide 05 on the Decoder&rsquo;s 5,376 parameters. Raise the number of workers and watch the compressors&rsquo; wire bytes grow while the all-reduce&rsquo;s stay put.</p>
     <div class="widget" id="wire-widget">
         <div class="row">
             <label>workers W <input type="range" id="wire-w" min="2" max="64" value="4"></label>
@@ -732,7 +732,7 @@
 </section>
 
 <footer class="footer">
-    <p>Part of the <a href="https://github.com/BrendanJamesLynskey/LLM_Hub_Transformer_Training">Transformer Training series</a> &middot; live, animated companion: <a href="https://transformer-training-explained.vercel.app/training/13-slow-links">chapter 13, Training over slow links</a> of <a href="https://transformer-training-explained.vercel.app/training">Transformer Decoder Explained, Part 2</a></p>
+    <p>Part of the <a href="https://github.com/BrendanJamesLynskey/LLM_Hub_Transformer_Training">Transformer Training series</a> &middot; live, animated companion: <a href="https://transformer-training-explained.vercel.app/training/13-slow-links">chapter 13, Training over slow links</a> of the <a href="https://transformer-training-explained.vercel.app/training">Training</a> site</p>
     <p style="margin-top: 0.5rem; font-size: 0.8rem;"><a href="https://brendanjameslynskey.github.io/Transformer_Training_11_Model_Parallelism/">&larr; 11 Model Parallel</a> &nbsp;&middot;&nbsp; <a href="https://brendanjameslynskey.github.io/LLM_Hub_Transformer_Training/">Series index</a> &nbsp;&middot;&nbsp; <a href="https://brendanjameslynskey.github.io/Transformer_Training_13_Scaling_Laws_and_Running_a_Job/">13 Scaling &amp; Running &rarr;</a></p>
     <p style="margin-top: 0.5rem; font-size: 0.75rem;">Measured numbers: <a href="https://github.com/BrendanJamesLynskey/transformer-explainer/blob/main/results.md">results.md</a> (transformer-explainer @15b1c9f). Code on these slides is cut from that repository.</p>
 </footer>
